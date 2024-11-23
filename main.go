@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
-	"path/filepath"
-	
 
 	"github.com/google/go-github/v53/github"
 	"golang.org/x/oauth2"
@@ -39,107 +37,72 @@ func VerifyRepository(client *github.Client, owner, repo string) error {
 	return nil
 }
 
-// SaveFile saves a file's content to a local file
-func SaveFile(path, content string) error {
-	// Clean the path to handle any potential directory traversal
-	cleanPath := filepath.Clean(path)
-
-	// Create the necessary directories for the path if they don't exist
-	dir := filepath.Dir(cleanPath)
-	err := os.MkdirAll(dir, os.ModePerm)
+// SaveToDataFile appends content to the data.txt file
+func SaveToDataFile(content string) error {
+	file, err := os.OpenFile("data.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create directory %s: %v", dir, err)
+		return fmt.Errorf("failed to open data.txt: %v", err)
 	}
+	defer file.Close()
 
-	// If the path already exists and is a directory, return an error
-	fileInfo, err := os.Stat(cleanPath)
-	if err == nil && fileInfo.IsDir() {
-		return fmt.Errorf("cannot save file: %s is a directory", cleanPath)
-	}
-
-	// Write the file content
-	err = ioutil.WriteFile(cleanPath, []byte(content), 0644)
+	_, err = file.WriteString(content + "\n\n")
 	if err != nil {
-		return fmt.Errorf("failed to write file %s: %v", cleanPath, err)
+		return fmt.Errorf("failed to write to data.txt: %v", err)
 	}
 
-	fmt.Printf("Saved file: %s\n", cleanPath)
 	return nil
 }
 
-
-
 // FetchRepoContent recursively fetches the file structure and code of a GitHub repo
-func FetchRepoContent(client *github.Client, owner, repo, path string) ([]*github.RepositoryContent, error) {
-	var allContents []*github.RepositoryContent
-
-	// Fetch repository contents for the current path
-	contents, dirContents, _, err := client.Repositories.GetContents(context.Background(), owner, repo, path, nil)
+func FetchRepoContent(client *github.Client, owner, repo, path string) error {
+	_, directoryContent, resp, err := client.Repositories.GetContents(context.Background(), owner, repo, path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error fetching contents at path '%s': %v", path, err)
-	}
-
-	// Handle if it's a file and not a directory
-	if contents != nil && dirContents == nil {
-		if *contents.Type == "file" {
-			fileContent, _, err := client.Repositories.DownloadContents(context.Background(), owner, repo, path, nil)
-			if err != nil {
-				return nil, fmt.Errorf("failed to download %s: %v", path, err)
-			}
-			contentBytes, err := ioutil.ReadAll(fileContent)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read %s: %v", path, err)
-			}
-			err = SaveFile(path, string(contentBytes))
-			if err != nil {
-				return nil, err
-			}
-			allContents = append(allContents, contents)
+		if resp != nil && resp.StatusCode == 404 {
+			return fmt.Errorf("path '%s' not found in repository", path)
 		}
-		return allContents, nil
+		return fmt.Errorf("error fetching contents at path '%s': %v", path, err)
 	}
 
-	// Handle directory case
-	for _, content := range dirContents {
-		if *content.Type == "dir" {
-			// Recursively fetch contents from subdirectories
-			subContents, err := FetchRepoContent(client, owner, repo, *content.Path)
-			if err != nil {
-				return nil, err
-			}
-			allContents = append(allContents, subContents...)
-		} else if *content.Type == "file" {
-			// Handle file content
+	// Process all items in the directory
+	for _, content := range directoryContent {
+		if *content.Type == "file" {
+			// Download and save file content
 			fileContent, _, err := client.Repositories.DownloadContents(context.Background(), owner, repo, *content.Path, nil)
 			if err != nil {
-				return nil, fmt.Errorf("failed to download %s: %v", *content.Path, err)
+				return fmt.Errorf("failed to download file %s: %v", *content.Path, err)
 			}
-			contentBytes, err := ioutil.ReadAll(fileContent)
+			
+			contentBytes, err := io.ReadAll(fileContent)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read %s: %v", *content.Path, err)
+				return fmt.Errorf("failed to read file %s: %v", *content.Path, err)
 			}
-			err = SaveFile(*content.Path, string(contentBytes))
+			
+			err = SaveToDataFile(fmt.Sprintf("File: %s\n%s", *content.Path, string(contentBytes)))
 			if err != nil {
-				return nil, err
+				return fmt.Errorf("failed to save content of %s: %v", *content.Path, err)
 			}
-			allContents = append(allContents, content)
+			fmt.Printf("Processed file: %s\n", *content.Path)
+		} else if *content.Type == "dir" {
+			// Recursively process subdirectories
+			fmt.Printf("Entering directory: %s\n", *content.Path)
+			err := FetchRepoContent(client, owner, repo, *content.Path)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
-	return allContents, nil
+	return nil
 }
-
-
-
 
 func main() {
 	// Replace with your actual GitHub token
 	token := "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"
-	
-	// Updated repository name with correct case
+
+	// Repository details
 	owner := "AnanteshG"
-	repo := "Contest-Hub"  // Fixed repository name
-	
+	repo := "Contest-Hub"
+
 	client := GetClient(token)
 
 	// First verify the repository exists and is accessible
@@ -149,12 +112,18 @@ func main() {
 		return
 	}
 
+	// Clear the data.txt file before starting to store new content
+	err = os.Remove("data.txt")
+	if err != nil && !os.IsNotExist(err) {
+		log.Fatalf("Failed to remove existing data.txt: %v", err)
+	}
+
 	fmt.Println("Starting to fetch repository content...")
-	
-	_, err = FetchRepoContent(client, owner, repo, "")
+
+	err = FetchRepoContent(client, owner, repo, "")
 	if err != nil {
 		log.Fatal("Error fetching repository content: ", err)
 	}
-	
+
 	fmt.Println("Repository scraping completed!")
 }
