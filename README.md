@@ -3,6 +3,15 @@
 
 GoGetGit is a CLI tool built using the GoFr framework for creating API endpoints. The project scrapes code from a given GitHub repository using the Go-GitHub package, stores code in a vector format using ChromaDB, and processes data with LLaMA 3.2 for natural language understanding. The tool can be run from a terminal with the command `gogetgit <GitHub_url>`.
 
+---
+
+## Disclaimer
+ ![#f03c15](https://placehold.co/15x15/f03c15/f03c15.png)
+**This is a prototype built in a 24-hr hackathon. The web version will be released shortly and the gogetgit package will be published online to directly download it into your PCs. Many features yet to come...**.
+Feel Free to contribute.
+
+---
+
 ## Features
 
 - **GoFr Framework**: Used for building endpoints that handle GitHub repository scraping and data processing.
